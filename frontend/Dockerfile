@@ -1,37 +1,40 @@
 # Multi-stage build for Angular
 
-# Stage 1: Build
-FROM node:18-alpine as builder
-
+# ========== Stage 1: Build ==========
+FROM node:18-alpine AS builder
 WORKDIR /app
 
-# Copy package files
+# Install dependencies with best layer cache
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy source code
+# Copy the rest (node_modules is ignored via .dockerignore)
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build (use package script; fallback to npx if script can't find ng)
+# Keep as-is if your package.json has: "build": "ng build --configuration production"
+RUN npm run build || npx @angular/cli@latest ng build --configuration production
 
-# Stage 2: Serve with Nginx
+# ========== Stage 2: Serve with Nginx ==========
 FROM nginx:alpine
 
-# Copy built application
-COPY --from=builder /app/dist/* /usr/share/nginx/html/
+# Option A (recommended): copy the entire dist/ to html/
+# Works for Angular outputs like:
+# - dist/<project>/
+# - dist/<project>/browser (Angular 17+ with builder)
+COPY --from=builder /app/dist/ /usr/share/nginx/html/
 
-# Copy nginx configuration
+# If you know your exact folder (check angular.json "outputPath"),
+# you can do:
+# COPY --from=builder /app/dist/<your-project-name>/ /usr/share/nginx/html/
+# or, for Angular 17+ default: /app/dist/<your-project-name>/browser/
+
+# Nginx config for SPA (fallback to index.html)
 COPY nginx-spa.conf /etc/nginx/conf.d/default.conf
 
-# Create nginx user and set permissions
+# Set safe permissions in one layer
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
 
-# Expose port
 EXPOSE 80
-
-# Start Nginx
 CMD ["nginx", "-g", "daemon off;"]
